@@ -56,12 +56,12 @@ public class ShoppingCartController {
         // simulate delay before DB access
         delayService.simulateLogNormalDelay();
 
-        model.addToCart(cartId, itemId, quantity);
+        Map<Integer, Integer> updatedItems = model.addToCart(cartId, itemId, quantity);
 
         HttpHeaders headers = new HttpHeaders();
         headers.add(HttpHeaders.LOCATION, "/shopping-cart/" + cartId + "/items");
 
-        return new ResponseEntity<>(model.getCartItems(cartId), headers, HttpStatus.CREATED);
+        return new ResponseEntity<>(updatedItems, headers, HttpStatus.CREATED);
     }
 
     /**
