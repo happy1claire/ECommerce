@@ -55,7 +55,7 @@ public class ShoppingCartModel {
     /**
      * Add items with quantities to the cart
      */
-    public void addToCart(String cartId, int itemId, int quantity) {
+    public Map<Integer, Integer> addToCart(String cartId, int itemId, int quantity) {
         if (cartId == null) {
             throw new IllegalArgumentException("cartId must not be null");
         }
@@ -71,8 +71,8 @@ public class ShoppingCartModel {
         items.merge(itemId, quantity, Integer::sum);
         System.out.println("items after merge: " + items);
 
-        // Save back to DB
-        saveCartItemsToDb(cartId, items);
+        // Save back to DB and return the updated items
+        return saveCartItemsToDb(cartId, items);
     }
 
 
@@ -95,8 +95,10 @@ public class ShoppingCartModel {
      * Get cartId and cartItems.
      */
     public String getCartIdAndItems(String cartId) {
-        Map<Integer, Integer> itemsMap = getCartItems(cartId);
+        return getCartIdAndItems(cartId, getCartItems(cartId));
+    }
 
+    private String getCartIdAndItems(String cartId, Map<Integer, Integer> itemsMap) {
         List<Map<String, Object>> itemList = itemsMap.entrySet().stream()
                 .map(entry -> {
                     Map<String, Object> itemAsMap = new HashMap<>();
@@ -120,7 +122,7 @@ public class ShoppingCartModel {
     /**
      * After User clicks checkout:
      * - call CreditCardAuthorizer
-     * - call Warehouse.ship to ship each product
+     * - enqueue a ship request to the Warehouse queue
      */
     public void checkout(String cartId, String creditCardNumber) {
         if (cartId == null) {
@@ -141,20 +143,8 @@ public class ShoppingCartModel {
         // 3. Credit Card Authorization
         authService.authorize(creditCardNumber);
 
-        // 4. Ship all items
-        for (Map.Entry<Integer, Integer> entry : items.entrySet()) {
-            int itemId = entry.getKey();
-            int quantity = entry.getValue();
-
-            long productId = itemId;   // itemId already is the product ID
-
-            boolean shipped = warehouseService.ship(productId, quantity);
-            if (!shipped) {
-                // For this assignment, shipping is always successful.
-                // In a real system, you might log or compensate here.
-                throw new IllegalStateException("Shipping failed for itemId: " + itemId);
-            }
-        }
+        // 4. Payment approved: enqueue ship request (cartId + items) to the Warehouse queue
+        warehouseService.ship(getCartIdAndItems(cartId, items));
     }
 
 

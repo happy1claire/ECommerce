@@ -1,56 +1,46 @@
 package com.cs6650.shoppingcartservice.service;
 
-import com.cs6650.shoppingcartservice.model.ShipRequest;
+import org.springframework.amqp.AmqpException;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Map;
-
 /**
- * WarehouseService is responsible for calling external WarehouseService.
- * It sends HTTP requests to /warehouse/reserve and /warehouse/ship.
- *
- * This class reuses the shared RestTemplate bean defined in RestTemplateConfig.
+ * WarehouseService is responsible for sending ship requests to the Warehouse.
+ * It publishes messages to the RabbitMQ warehouse queue (fire-and-forget),
+ * and the Warehouse Service consumes them asynchronously.
  */
 @Service
 public class WarehouseService {
 
-    private final RestTemplate restTemplate;
-    private final String warehouseBaseUrl;
+    private final RabbitTemplate rabbitTemplate;
+    private final String queueName;
     private static final Logger logger = LoggerFactory.getLogger(WarehouseService.class);
 
     /**
-     * warehouse.service.url should be defined in application.properties, e.g.:
+     * rabbitmq.queue.name should be defined in application.properties, e.g.:
      *
-     * warehouse.service.url=http://localhost:8082
+     * rabbitmq.queue.name=warehouse_orders
      */
-    public WarehouseService(RestTemplate restTemplate,
-            @Value("${warehouse.service.url}") String warehouseBaseUrl) {
-        this.restTemplate = restTemplate;
-        this.warehouseBaseUrl = warehouseBaseUrl;
+    public WarehouseService(RabbitTemplate rabbitTemplate,
+            @Value("${rabbitmq.queue.name}") String queueName) {
+        this.rabbitTemplate = rabbitTemplate;
+        this.queueName = queueName;
     }
 
     /**
-     * Calls WarehouseService /warehouse/ship.
-     * Always expected to succeed in this assignment.
+     * Publishes a ship request to the warehouse queue.
+     * Checkout does not wait for the Warehouse to ship.
      */
-    public boolean ship(long productId, int quantity) {
-        String url = warehouseBaseUrl + "/warehouse/ship";
-        logger.info("Shipping product {}, quantity: {}", productId, quantity);
-        ShipRequest request = new ShipRequest(productId, quantity);
+    public void ship(String shipRequestJson) {
+        logger.info("Enqueue ship request: {}", shipRequestJson);
 
         try {
-            ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
-
-            return response.getStatusCode().is2xxSuccessful();
-
-        } catch (Exception e) {
-            return false;
+            rabbitTemplate.convertAndSend(queueName, shipRequestJson);
+        } catch (AmqpException e) {
+            throw new IllegalStateException("Failed to enqueue ship request", e);
         }
     }
 }
