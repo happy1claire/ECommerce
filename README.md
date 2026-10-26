@@ -1,4 +1,4 @@
-# cs6650-assignment5
+# ecommerce
 
 ```bash
 cd infrastructure
