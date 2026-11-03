@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.*;
@@ -67,11 +68,15 @@ public class PropagationService {
     /**
      * Performs a quorum-based read (R) across all replicas.
      *
+     * A replica that answers "not found" still counts toward the quorum,
+     * so a key that does not exist is reported as empty instead of as a failure.
+     *
      * @param key customerId
      * @param timeoutMs timeout for quorum
-     * @return newest VersionedValue, or null if quorum fails
+     * @return newest VersionedValue, or empty if the quorum agrees the key does not exist
+     * @throws TimeoutException if not enough replicas responded to reach quorum
      */
-    public VersionedValue readWithQuorum(String key, long timeoutMs) {
+    public Optional<VersionedValue> readWithQuorum(String key, long timeoutMs) throws TimeoutException {
 
         int quorum = this.propagationReadQuorum;
 
@@ -79,9 +84,11 @@ public class PropagationService {
                 .filter(peer -> !peer.equalsIgnoreCase(selfAddress))
                 .toList();
 
-        List<Callable<VersionedValue>> tasks = new ArrayList<>();
+        // Each task returns the replica's value, Optional.empty() if the replica
+        // does not have the key, or null if the replica could not be reached
+        List<Callable<Optional<VersionedValue>>> tasks = new ArrayList<>();
 
-        tasks.add(() -> customerStore.getCustomer(key));
+        tasks.add(() -> Optional.ofNullable(customerStore.getCustomer(key)));
 
         for (String peer : otherPeers) {
             tasks.add(() -> {
@@ -104,8 +111,10 @@ public class PropagationService {
                     long version = ((Number) body.get("version")).longValue();
                     long timestamp = ((Number) body.get("timestamp")).longValue();
 
-                    return new VersionedValue(c, version, timestamp);
+                    return Optional.of(new VersionedValue(c, version, timestamp));
 
+                } catch (HttpClientErrorException.NotFound e) {
+                    return Optional.empty();
                 } catch (Exception e) {
                     return null;
                 }
@@ -113,7 +122,7 @@ public class PropagationService {
         }
 
         ExecutorService exec = Executors.newCachedThreadPool();
-        List<Future<VersionedValue>> futures = tasks.stream()
+        List<Future<Optional<VersionedValue>>> futures = tasks.stream()
                 .map(exec::submit)
                 .toList();
 
@@ -121,10 +130,10 @@ public class PropagationService {
         int success = 0;
         VersionedValue best = null;
 
-        for (Future<VersionedValue> f : futures) {
+        for (Future<Optional<VersionedValue>> f : futures) {
             long remaining = Math.max(1, deadline - System.currentTimeMillis());
 
-            VersionedValue result = null;
+            Optional<VersionedValue> result = null;
             try {
                 result = f.get(remaining, TimeUnit.MILLISECONDS);
             } catch (Exception ignore) {}
@@ -132,19 +141,19 @@ public class PropagationService {
             if (result != null) {
                 success++;
 
-                if (best == null || result.getVersion() > best.getVersion()) {
-                    best = result;
+                if (result.isPresent() && (best == null || result.get().getVersion() > best.getVersion())) {
+                    best = result.get();
                 }
 
                 if (success >= quorum) {
                     exec.shutdownNow();
-                    return best;
+                    return Optional.ofNullable(best);
                 }
             }
         }
 
         exec.shutdownNow();
-        return null;
+        throw new TimeoutException("Only " + success + " of " + quorum + " replicas responded");
     }
 
     /**
@@ -205,7 +214,11 @@ public class PropagationService {
         List<Future<Boolean>> futures = tasks.stream().map(executor::submit).toList();
         long deadline = System.currentTimeMillis() + propagateTimeoutMs;
 
-        int successCount = 0;
+        // The coordinator has already written locally, which counts toward W
+        int successCount = 1;
+        if (successCount >= propagationWriteQuorum) {
+            return true;
+        }
 
         for (Future<Boolean> future : futures) {
             long timeout = Math.max(1, deadline - System.currentTimeMillis());

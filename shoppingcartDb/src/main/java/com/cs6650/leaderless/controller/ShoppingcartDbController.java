@@ -13,7 +13,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Random;
+import java.util.concurrent.TimeoutException;
 
 /**
  * This controller is a leaderless replication model where any node
@@ -61,26 +63,33 @@ public class ShoppingcartDbController {
    * It returns the versioned cart value that has the highest version among
    * the quorum responses.
    *
+   * If the quorum agrees the cart does not exist, the method returns HTTP 404.
    * If quorum is not achieved within the timeout window, the method returns
    * HTTP 504 (Gateway Timeout), indicating that the system cannot guarantee
    * a consistent read at this moment.
    *
    * @param key the cart identifier (typically customer ID)
    * @return the shopping cart value with metadata (version, timestamp),
-   *         or an error response if quorum read fails
+   *         404 if the cart does not exist, or 504 if quorum read fails
    * @throws InterruptedException if the read process is interrupted
    */
   @GetMapping("/get/{key}")
   public ResponseEntity<?> getItems(@PathVariable String key) throws InterruptedException {
     simulateDelay();
 
-    VersionedValue cart = propagationService.readWithQuorum(key, propagationTimeoutMs);
-
-    if (cart == null) {
+    Optional<VersionedValue> result;
+    try {
+      result = propagationService.readWithQuorum(key, propagationTimeoutMs);
+    } catch (TimeoutException e) {
       return ResponseEntity.status(HttpStatus.GATEWAY_TIMEOUT)
-              .body("Quorum read failed or not enough replicas responded");
+              .body("Quorum read failed: " + e.getMessage());
     }
 
+    if (result.isEmpty()) {
+      return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+    }
+
+    VersionedValue cart = result.get();
     return ResponseEntity.ok(
             Map.of(
                     "items", cart.getShoppingcart().getItems(),

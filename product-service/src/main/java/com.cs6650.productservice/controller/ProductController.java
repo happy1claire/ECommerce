@@ -134,7 +134,7 @@ public class ProductController {
               productData.getSku(),
               productData.getManufacturer(),
               productData.getCategoryId(),
-              productData.getSomeOtherId()
+              productData.getWeight()
       );
       try {
 
@@ -152,17 +152,30 @@ public class ProductController {
           HttpResponse<String> response =
                   httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
 
-          System.out.println(response.body());
+          log.info("ProductDB POST response status: {}, body: {}", response.statusCode(), response.body());
 
-          if (response.statusCode() == 201) {
-              System.out.println("Created");
-          } else {
-              System.out.println("Error: " + response.statusCode());
+          // Only report success if ProductDB actually stored the product
+          if (response.statusCode() != 201) {
+              Map<String, Object> error = new HashMap<>();
+              error.put("error", "PRODUCT_DB_ERROR");
+              error.put("message", "ProductDB returned status " + response.statusCode());
+              error.put("downstreamResponse", response.body());
+              return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
           }
-      } catch (IOException | InterruptedException e) {
-          e.printStackTrace();
+      } catch (IOException e) {
+          log.error("IO error when calling ProductDB", e);
+          Map<String, Object> error = new HashMap<>();
+          error.put("error", "IO_EXCEPTION");
+          error.put("message", "I/O error when calling ProductDB");
+          return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+      } catch (InterruptedException e) {
+          log.error("Request to ProductDB was interrupted", e);
+          Thread.currentThread().interrupt();
+          Map<String, Object> error = new HashMap<>();
+          error.put("error", "INTERRUPTED");
+          error.put("message", "Request to ProductDB was interrupted");
+          return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
       }
-
 
     return ResponseEntity.status(HttpStatus.CREATED).body(productData);
   }

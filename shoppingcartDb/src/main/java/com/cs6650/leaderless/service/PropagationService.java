@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.*;
@@ -89,15 +90,18 @@ public class PropagationService {
     /**
      * Performs a quorum-based read (R) across all replicas in the leaderless system.
      *
-     * If quorum cannot be achieved within the timeout window, the method returns {@code null},
-     * allowing the controller to respond with an appropriate HTTP error (e.g., 504 Gateway Timeout).
+     * A replica that answers "not found" still counts toward the quorum, so a cart
+     * that does not exist is reported as empty instead of as a failure.
+     * If quorum cannot be achieved within the timeout window, the method throws
+     * {@link TimeoutException}, allowing the controller to respond with 504 Gateway Timeout.
      *
      * @param key the key being read (shopping cart ID)
      * @param timeoutMs maximum time allowed to gather quorum responses
      * @return the newest {@link VersionedValue} observed among quorum responses,
-     *         or {@code null} if quorum was not reached
+     *         or empty if the quorum agrees the cart does not exist
+     * @throws TimeoutException if quorum was not reached
      */
-    public VersionedValue readWithQuorum(String key, long timeoutMs) {
+    public Optional<VersionedValue> readWithQuorum(String key, long timeoutMs) throws TimeoutException {
 
         int quorum = this.propagationReadQuorum;
 
@@ -105,9 +109,11 @@ public class PropagationService {
                 .filter(peer -> !peer.equalsIgnoreCase(selfAddress))
                 .toList();
 
-        List<Callable<VersionedValue>> tasks = new ArrayList<>();
+        // Each task returns the replica's value, Optional.empty() if the replica
+        // does not have the key, or null if the replica could not be reached
+        List<Callable<Optional<VersionedValue>>> tasks = new ArrayList<>();
 
-        tasks.add(() -> shoppingcartStore.getCart(key));
+        tasks.add(() -> Optional.ofNullable(shoppingcartStore.getCart(key)));
 
         for (String peer : otherPeers) {
             tasks.add(() -> {
@@ -141,8 +147,10 @@ public class PropagationService {
                     long version = ((Number) body.get("version")).longValue();
                     long timestamp = ((Number) body.get("timestamp")).longValue();
 
-                    return new VersionedValue(sc, version, timestamp);
+                    return Optional.of(new VersionedValue(sc, version, timestamp));
 
+                } catch (HttpClientErrorException.NotFound e) {
+                    return Optional.empty();
                 } catch (Exception e) {
                     return null;
                 }
@@ -150,16 +158,16 @@ public class PropagationService {
         }
 
         ExecutorService exec = Executors.newCachedThreadPool();
-        List<Future<VersionedValue>> futures = new ArrayList<>();
-        for (Callable<VersionedValue> t : tasks) futures.add(exec.submit(t));
+        List<Future<Optional<VersionedValue>>> futures = new ArrayList<>();
+        for (Callable<Optional<VersionedValue>> t : tasks) futures.add(exec.submit(t));
 
         long deadline = System.currentTimeMillis() + timeoutMs;
         int success = 0;
         VersionedValue best = null;
 
-        for (Future<VersionedValue> f : futures) {
+        for (Future<Optional<VersionedValue>> f : futures) {
             long timeout = Math.max(1, deadline - System.currentTimeMillis());
-            VersionedValue result = null;
+            Optional<VersionedValue> result = null;
 
             try {
                 result = f.get(timeout, TimeUnit.MILLISECONDS);
@@ -168,19 +176,19 @@ public class PropagationService {
             if (result != null) {
                 success++;
 
-                if (best == null || result.getVersion() > best.getVersion()) {
-                    best = result;
+                if (result.isPresent() && (best == null || result.get().getVersion() > best.getVersion())) {
+                    best = result.get();
                 }
 
                 if (success >= quorum) {
                     exec.shutdownNow();
-                    return best;
+                    return Optional.ofNullable(best);
                 }
             }
         }
 
         exec.shutdownNow();
-        return null;
+        throw new TimeoutException("Only " + success + " of " + quorum + " replicas responded");
     }
 
     /**
@@ -258,7 +266,11 @@ public class PropagationService {
 
             long deadline = System.currentTimeMillis() + propagateTimeoutMs;
 
-            int successCount = 0;
+            // The coordinator has already written locally, which counts toward W
+            int successCount = 1;
+            if (successCount >= propagationWriteQuorum) {
+                return true;
+            }
 
             for (Future<Boolean> future : futures) {
                 long timeout = Math.max(1, deadline - System.currentTimeMillis());

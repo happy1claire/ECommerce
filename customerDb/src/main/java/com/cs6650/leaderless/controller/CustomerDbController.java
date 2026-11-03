@@ -13,7 +13,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Random;
+import java.util.concurrent.TimeoutException;
 
 /**
  * A leaderless-replication Customer database controller.
@@ -64,22 +66,29 @@ public class CustomerDbController {
    * to satisfy the read quorum. It selects the value with the highest
    * version across all responses.
    *
+   * If the quorum agrees the customer does not exist, HTTP 404 is returned.
    * If quorum is not reached within the timeout window, HTTP 504 is returned.
    *
    * @param key the customerId
    * @return the resolved Customer value with version + timestamp metadata,
-   *         or a timeout error if quorum cannot be achieved
+   *         404 if the customer does not exist, or 504 if quorum cannot be achieved
    */
   @GetMapping("/get/{key}")
   public ResponseEntity<?> getCustomer(@PathVariable String key) throws InterruptedException {
     simulateDelay();
-    VersionedValue customer = propagationService.readWithQuorum(key, propagationTimeoutMs);
-
-    if (customer == null) {
+    Optional<VersionedValue> result;
+    try {
+      result = propagationService.readWithQuorum(key, propagationTimeoutMs);
+    } catch (TimeoutException e) {
       return ResponseEntity.status(HttpStatus.GATEWAY_TIMEOUT)
-              .body("Quorum read failed or not enough replicas responded");
+              .body("Quorum read failed: " + e.getMessage());
     }
 
+    if (result.isEmpty()) {
+      return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+    }
+
+    VersionedValue customer = result.get();
     return ResponseEntity.ok(
             Map.of(
                     "shoppingCartsIds", customer.getCustomer().getShoppingcartIds(),

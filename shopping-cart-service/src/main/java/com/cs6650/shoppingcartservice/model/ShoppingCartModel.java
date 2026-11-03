@@ -15,6 +15,7 @@ import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
 @Service
@@ -122,6 +123,7 @@ public class ShoppingCartModel {
     /**
      * After User clicks checkout:
      * - call CreditCardAuthorizer
+     * - empty the cart
      * - enqueue a ship request to the Warehouse queue
      */
     public void checkout(String cartId, String creditCardNumber) {
@@ -143,8 +145,22 @@ public class ShoppingCartModel {
         // 3. Credit Card Authorization
         authService.authorize(creditCardNumber);
 
-        // 4. Payment approved: enqueue ship request (cartId + items) to the Warehouse queue
-        warehouseService.ship(getCartIdAndItems(cartId, items));
+        // 4. Empty the cart before enqueueing. If this DB write fails, nothing has
+        //    been shipped yet, so the checkout can be retried without shipping twice.
+        saveCartItemsToDb(cartId, new HashMap<>());
+
+        // 5. Payment approved: enqueue ship request (cartId + items) to the Warehouse queue
+        try {
+            warehouseService.ship(getCartIdAndItems(cartId, items));
+        } catch (IllegalStateException e) {
+            // Put the items back so the customer can retry the checkout
+            try {
+                saveCartItemsToDb(cartId, items);
+            } catch (IllegalStateException restoreError) {
+                e.addSuppressed(restoreError);
+            }
+            throw e;
+        }
     }
 
 
@@ -165,6 +181,8 @@ public class ShoppingCartModel {
      *   - Returns the first cartId in "shoppingCartsIds" if present.
      *   - Returns null if the customer has no cartIds in the DB
      *     or if the record does not exist.
+     *   - Throws IllegalStateException if the DB cannot be read, so that a DB
+     *     outage does not create a duplicate cart for an existing customer.
      */
     public String fetchCartIdFromDb(String customerId) {
         try {
@@ -186,10 +204,8 @@ public class ShoppingCartModel {
         } catch (HttpClientErrorException.NotFound e) {
             // The customer record does not exist in the DB
             return null;
-        } catch (Exception e) {
-            // For simplicity, treat any error as "no cartId in DB"
-            // You may want to log or rethrow depending on your needs
-            return null;
+        } catch (RestClientException e) {
+            throw new IllegalStateException("Failed to read cartId from Customer DB", e);
         }
     }
 
@@ -245,7 +261,9 @@ public class ShoppingCartModel {
      *   }
      *
      * @param cartId the cart identifier
-     * @return a mutable map of productId -> quantity; empty map if not found or on errors
+     * @return a mutable map of productId -> quantity; empty map if the cart does not exist
+     * @throws IllegalStateException if the DB cannot be read. Treating that as an empty
+     *         cart would make addToCart overwrite the existing items.
      */
     private Map<Integer, Integer> loadCartItemsFromDb(String cartId) {
         try {
@@ -260,9 +278,8 @@ public class ShoppingCartModel {
         } catch (HttpClientErrorException.NotFound e) {
             // Cart record does not exist in the DB
             return new HashMap<>();
-        } catch (Exception e) {
-            // For simplicity, treat any error as "no items"
-            return new HashMap<>();
+        } catch (RestClientException e) {
+            throw new IllegalStateException("Failed to load cart items from Shoppingcart DB", e);
         }
     }
 
