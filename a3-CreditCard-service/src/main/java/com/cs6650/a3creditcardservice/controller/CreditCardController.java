@@ -36,14 +36,23 @@ public class CreditCardController {
         // 90% Authorized, 10% Declined
         int roll = ThreadLocalRandom.current().nextInt(100);
         if (roll < AUTH_SUCCESS_PERCENT) {
-            log.info("CCA AUTHORIZED {}", cc);
-            
+            log.info("CCA AUTHORIZED {}", maskCardNumber(cc));
+
             return ResponseEntity.ok("Authorized");
         } else {
-            log.info("CCA DECLINED {}", cc);
+            log.info("CCA DECLINED {}", maskCardNumber(cc));
             return ResponseEntity.status(HttpStatus.PAYMENT_REQUIRED).body("PAYMENT_DECLINED");
         }
 
+    }
+
+    /**
+     * Never log a full card number (logs are shipped to CloudWatch).
+     * Keeps only the last four digits, e.g. "4111-1111-1111-1234" -> "****-****-****-1234".
+     * Only called after CARD_PATTERN has matched, so cc is always NNNN-NNNN-NNNN-NNNN.
+     */
+    static String maskCardNumber(String cc) {
+        return "****-****-****-" + cc.substring(cc.length() - 4);
     }
 
 

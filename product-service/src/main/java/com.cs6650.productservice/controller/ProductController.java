@@ -9,6 +9,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.net.http.HttpRequest;
+import java.time.Duration;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Random;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,7 +35,13 @@ public class ProductController {
 
   private final Random random = new Random();
 
-  private final HttpClient httpClient = HttpClient.newHttpClient();
+  // Bounded timeouts so a slow or misrouted productDB call cannot pin request threads forever.
+  private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);
+  private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(5);
+
+  private final HttpClient httpClient = HttpClient.newBuilder()
+          .connectTimeout(CONNECT_TIMEOUT)
+          .build();
   private final ObjectMapper objectMapper = new ObjectMapper();
 
 
@@ -54,6 +61,7 @@ public class ProductController {
     try{
         HttpRequest request = HttpRequest.newBuilder(
                 URI.create(productDbUrl + "/get/" + productId))
+                .timeout(REQUEST_TIMEOUT)
                 .GET()
                 .build();
         HttpResponse<String> response = httpClient
@@ -145,6 +153,7 @@ public class ProductController {
 
           HttpRequest httpRequest = HttpRequest.newBuilder()
                   .uri(URI.create(productDbUrl+"/product"))
+                  .timeout(REQUEST_TIMEOUT)
                   .header("Content-Type", "application/json")
                   .POST(HttpRequest.BodyPublishers.ofString(json))
                   .build();

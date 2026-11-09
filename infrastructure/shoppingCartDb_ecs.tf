@@ -28,6 +28,19 @@ resource "aws_ecs_task_definition" "shoppingcartdb" {
       protocol      = "tcp"
     }]
 
+    # Used by entrypoint.sh to discover the other replicas of this service.
+    # (Literal service name: referencing aws_ecs_service here would be a cycle.)
+    environment = [
+      {
+        name  = "ECS_CLUSTER_NAME"
+        value = aws_ecs_cluster.main.name
+      },
+      {
+        name  = "ECS_SERVICE_NAME"
+        value = "shoppingcartdb-service"
+      }
+    ]
+
     logConfiguration = {
       logDriver = "awslogs"
       options = {

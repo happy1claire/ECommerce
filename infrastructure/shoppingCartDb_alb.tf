@@ -29,9 +29,9 @@ resource "aws_lb_target_group" "shoppingcartdb_tg" {
 
 resource "aws_lb" "shoppingcartdb" {
   name               = "shoppingcartdb-alb"
-  internal           = false
+  internal           = true # internal-only: never expose DB replicas or the broker to the internet
   load_balancer_type = "application"
-  security_groups    = [aws_security_group.lb.id]
+  security_groups    = [aws_security_group.internal_lb.id]
   subnets            = data.aws_subnets.default.ids
 
   tags = {

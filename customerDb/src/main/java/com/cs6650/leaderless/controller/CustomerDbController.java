@@ -165,10 +165,16 @@ public class CustomerDbController {
    */
   @PostMapping("/propagate")
   public ResponseEntity<?> propagate(@RequestBody PropagateRequest request) throws InterruptedException {
-    simulateDelay();
     String key = request.getKey();
     Customer customer = request.getCustomer();
     long version = request.getVersion();
+
+    // Reject malformed replication messages (null key/value, negative or absurdly large version)
+    if (key == null || customer == null || !CustomerStore.isValidRemoteVersion(version)) {
+      return ResponseEntity.badRequest().body("Invalid propagate request: key, customer and a valid version are required");
+    }
+
+    simulateDelay();
 
     VersionedValue current = customerStore.getCustomer(key);
     if (current == null || version > current.getVersion()) {

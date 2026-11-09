@@ -49,9 +49,9 @@ resource "aws_lb_target_group" "rabbitmq_management" {
 # Network Load Balancer
 resource "aws_lb" "rabbitmq" {
   name               = "rabbitmq-nlb"
-  internal           = false  # Set to true if you want internal-only
+  internal           = true # internal-only: never expose DB replicas or the broker to the internet
   load_balancer_type = "network"
-  security_groups    = [aws_security_group.lb.id]
+  security_groups    = [aws_security_group.internal_lb.id]
   subnets            = data.aws_subnets.default.ids
 
   enable_deletion_protection       = false  # Set to true in production
@@ -106,6 +106,6 @@ output "rabbitmq_amqp_url" {
 }
 
 output "rabbitmq_management_url" {
-  description = "Management UI URL"
+  description = "Management UI URL (internal NLB: reachable only from inside the VPC)"
   value       = "http://${aws_lb.rabbitmq.dns_name}:15672"
 }

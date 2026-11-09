@@ -17,6 +17,20 @@ public class ShoppingcartStore {
   private final AtomicLong versionCounter = new AtomicLong(0);
   private final int nodeId;
 
+  /**
+   * Largest Lamport counter accepted from another node: 2^40 (about 1.1 trillion writes).
+   * Far above any real write count, but far below 2^47, where (counter << 16) in
+   * nextVersion() would overflow into negative versions. Without this bound, a single
+   * /propagate request with version Long.MAX_VALUE pins a record forever and makes
+   * every later version on this node negative.
+   */
+  public static final long MAX_REMOTE_COUNTER = 1L << 40;
+
+  /** A replicated version must be non-negative and its counter part must be within bounds. */
+  public static boolean isValidRemoteVersion(long version) {
+    return version >= 0 && (version >>> 16) <= MAX_REMOTE_COUNTER;
+  }
+
   public ShoppingcartStore(@Value("${server.port}") int port) {
     // A simple way to get a unique node ID from the port (e.g., 8081 -> 81)
     // This assumes ports are in a reasonable range where this is unique.
@@ -36,6 +50,9 @@ public class ShoppingcartStore {
   }
 
   public void putIfNewer(String key, Shoppingcart shoppingcart, long version) throws InterruptedException {
+    if (shoppingcart == null || !isValidRemoteVersion(version)) {
+      throw new IllegalArgumentException("Rejected replicated write: null value or out-of-range version " + version);
+    }
     // Extract counter from incoming version
     long incomingCounter = version >>> 16;
 

@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class CustomerStoreTest {
 
@@ -47,6 +48,28 @@ class CustomerStoreTest {
 
     // The next local write must win over the replicated one
     assertThat(store.nextVersion() >>> 16).isEqualTo(11);
+  }
+
+  @Test
+  void putIfNewer_rejectsOutOfRangeVersionsWithoutTouchingCounter() {
+    CustomerStore store = new CustomerStore(8081);
+
+    assertThatThrownBy(() -> store.putIfNewer("c1", customer("attacker-cart"), Long.MAX_VALUE))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> store.putIfNewer("c1", customer("attacker-cart"), -1L))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    assertThat(store.getCustomer("c1")).isNull();
+    assertThat(store.nextVersion()).isEqualTo((1L << 16) | 81);
+  }
+
+  @Test
+  void putIfNewer_rejectsNullValue() {
+    CustomerStore store = new CustomerStore(8081);
+
+    assertThatThrownBy(() -> store.putIfNewer("c1", null, 1L << 16))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(store.getCustomer("c1")).isNull();
   }
 
   private static Customer customer(String cartId) {

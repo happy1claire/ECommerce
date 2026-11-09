@@ -17,11 +17,15 @@ echo "MY PRIVATE IP is: $MY_PRIVATE_IP"
 echo "Discovering Peers..."
 
 # Get list of tasks
-TASK_ARNS=$(aws ecs list-tasks --cluster my-cluster --service-name my-db-service --query 'taskArns[*]' --output text)
+# Cluster and service names come from the task definition (Terraform sets
+# ECS_CLUSTER_NAME / ECS_SERVICE_NAME); the old hardcoded names are only defaults.
+CLUSTER_NAME="${ECS_CLUSTER_NAME:-my-cluster}"
+SERVICE_NAME="${ECS_SERVICE_NAME:-my-db-service}"
+TASK_ARNS=$(aws ecs list-tasks --cluster "$CLUSTER_NAME" --service-name "$SERVICE_NAME" --query 'taskArns[*]' --output text)
 
 # Get details for those tasks
 # We specifically ask for 'privateIPv4Address' to ensure we don't get the public one.
-PEER_IPS=$(aws ecs describe-tasks --cluster my-cluster --tasks $TASK_ARNS \
+PEER_IPS=$(aws ecs describe-tasks --cluster "$CLUSTER_NAME" --tasks $TASK_ARNS \
   --query 'tasks[].attachments[].details[?name==`privateIPv4Address`].value' \
   --output text)
 

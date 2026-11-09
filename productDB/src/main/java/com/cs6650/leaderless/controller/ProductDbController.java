@@ -157,10 +157,16 @@ public class ProductDbController {
    */
   @PostMapping("/propagate")
   public ResponseEntity<?> propagate(@RequestBody PropagateRequest request) throws InterruptedException {
-    simulateDelay();
     Integer key = request.getKey();
     Product product = request.getProduct();
     long version = request.getVersion();
+
+    // Reject malformed replication messages (null key/value, negative or absurdly large version)
+    if (key == null || product == null || !ProductStore.isValidRemoteVersion(version)) {
+      return ResponseEntity.badRequest().body("Invalid propagate request: key, product and a valid version are required");
+    }
+
+    simulateDelay();
 
     // write if newer
     VersionedValue current = productStorage.get(key);

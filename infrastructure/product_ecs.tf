@@ -32,6 +32,12 @@ resource "aws_ecs_task_definition" "product" {
       {
         name  = "SERVER_PORT"
         value = "8080"
+      },
+      {
+        # Without this, productdb.base-url falls back to http://localhost:8080,
+        # which is product-service itself inside this task (infinite self-call).
+        name  = "PRODUCTDB_BASE_URL"
+        value = "http://${aws_lb.productdb.dns_name}"
       }
     ]
 

@@ -41,7 +41,7 @@ mvn spring-boot:run
 ### 5. Check the log in Console
 In the CreditCardAuth service console:
 ```
-23:42:44.723 [http-nio-8070-exec-1] INFO  c.c.a.c.CreditCardController - CCA AUTHORIZED 4111-1111-1111-1111
+23:42:44.723 [http-nio-8070-exec-1] INFO  c.c.a.c.CreditCardController - CCA AUTHORIZED ****-****-****-1111
 ```
 
 In the Warehouse service Console:

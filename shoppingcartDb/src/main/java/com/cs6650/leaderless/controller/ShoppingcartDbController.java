@@ -165,11 +165,16 @@ public class ShoppingcartDbController {
   @PostMapping("/propagate")
   public ResponseEntity<?> propagate(@RequestBody PropagateRequest request) throws InterruptedException {
 
-    simulateDelay();
-
     String key = request.getKey();
     Shoppingcart shoppingcart = request.getShoppingcart();
     long version = request.getVersion();
+
+    // Reject malformed replication messages (null key/value, negative or absurdly large version)
+    if (key == null || shoppingcart == null || !ShoppingcartStore.isValidRemoteVersion(version)) {
+      return ResponseEntity.badRequest().body("Invalid propagate request: key, shoppingcart and a valid version are required");
+    }
+
+    simulateDelay();
 
     // write if newer
     VersionedValue current = shoppingcartStore.getCart(key);
